@@ -81,6 +81,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 #shuf{opacity:.5}#shuf.on{opacity:1;color:var(--aqua)}
 .play{width:78px;height:78px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,var(--aqua),var(--indigo));color:#04050c;box-shadow:inset 0 2px 0 rgba(255,255,255,.55),0 14px 34px rgba(75,61,242,.5)}
 .play svg{width:34px;height:34px;fill:currentColor;stroke:none}
+.card{padding:16px;border-radius:22px;margin-top:16px}
+.card b{font-size:16px}.card p{margin:6px 0 12px;color:var(--mut);font-size:14px;line-height:1.5}
+.card input{width:100%;height:46px;border-radius:14px;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.25);color:var(--tx);padding:0 14px;font:inherit;font-size:15px}
+.more{margin:12px auto 0;display:flex;justify-content:center}
 </style></head><body>
 <div class="blobs"><i></i><i></i><i></i></div>
 <main>
@@ -88,6 +92,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
  <h1>Onda</h1>
  <div class="glass search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="q" type="search" placeholder="Canciones, artistas o álbumes" enterkeyhint="search" autocomplete="off"></div>
  <button class="hero" id="hero"><b>Música cristiana evangélica</b><span>Alabanza, adoración, gospel y más</span></button>
+ <div id="jmcard" class="glass card" hidden><b>Añade cientos de miles de canciones más</b><p>Activa Jamendo, gratis y sin anuncios. Crea una cuenta en devportal.jamendo.com, registra una aplicación y pega aquí su Client ID.</p><input id="jmkey" placeholder="Client ID de Jamendo" autocomplete="off"><button class="btn" id="jmsave" style="margin-top:10px">Activar</button><div id="jmerr" class="note"></div></div>
  <h2 id="ttl">Tendencias</h2>
  <div id="msg" class="note"></div>
  <div id="l-home" class="list"></div>
@@ -161,20 +166,29 @@ const CATS=[
 $('#grid').innerHTML=CATS.map(c=>`<button class="cat${c.big?' big':''}" data-c="${c.id}" style="--bg:${c.c}">${esc(c.n)}</button>`).join('');
 
 /* API de Audius */
-const mapT=t=>({id:t.id,title:t.title,artist:t.user?.name||'',art:t.artwork?.['480x480']||t.artwork?.['150x150']||'',dur:t.duration});
+const mapT=t=>({id:t.id,src:'au',title:t.title,artist:t.user?.name||'',art:t.artwork?.['480x480']||t.artwork?.['150x150']||'',dur:t.duration});
 async function getHost(){if(host)return host;if(!hosts.length){try{hosts=(await(await fetch('https://api.audius.co')).json()).data||[]}catch{}}if(!hosts.length)hosts=['https://discoveryprovider.audius.co'];host=hosts[Math.random()*hosts.length|0];return host}
 async function api(p){for(let k=0;k<3;k++){try{const h=await getHost();const r=await fetch(h+p+(p.includes('?')?'&':'?')+'app_name=onda');if(!r.ok)throw 0;return((await r.json()).data||[]).filter(t=>t.is_streamable!==false).map(mapT)}catch{host=null}}throw Error('net')}
-const cache=new Map();
-async function get(kind,a,g){const k=kind+'|'+a+'|'+g;if(cache.has(k))return cache.get(k);
- const p=kind==='s'?`/v1/tracks/search?query=${encodeURIComponent(a)}&limit=30`:`/v1/tracks/trending?time=week&limit=30${g?'&genre='+encodeURIComponent(g):''}`;
- const d=await api(p);cache.set(k,d);return d}
+const cache=new Map();let jmKey=LS.get('onda_jmkey','');
+const JM={Pop:'pop',Latin:'latin','Hip-Hop/Rap':'hiphop',Electronic:'electronic',Rock:'rock','R&B/Soul':'rnb','Lo-Fi':'lofi',Acoustic:'acoustic',Folk:'folk',Jazz:'jazz',Classical:'classical',Ambient:'ambient',Devotional:'gospel'};
+const enc=encodeURIComponent;
+const auAPI=(kind,a,g,off)=>api(kind==='s'?`/v1/tracks/search?query=${enc(a)}&limit=40&offset=${off}`:`/v1/tracks/trending?time=week&limit=40&offset=${off}${g?'&genre='+enc(g):''}`);
+async function jmAPI(kind,a,tag,off){if(!jmKey)return[];
+ const u=`https://api.jamendo.com/v3.0/tracks/?client_id=${enc(jmKey)}&format=json&limit=40&offset=${off}&audioformat=mp32`+(kind==='s'?`&search=${enc(a)}&order=relevance`:`&order=popularity_week${tag?'&tags='+enc(tag):''}`);
+ const j=await(await fetch(u)).json();if(!j.headers||j.headers.status!=='success')throw Error('jm');
+ return(j.results||[]).filter(t=>t.audio).map(t=>({id:'jm'+t.id,src:'jm',url:t.audio,title:t.name,artist:t.artist_name,art:t.image||t.album_image||'',dur:t.duration}))}
+async function get(kind,a,g,tag,off){const k=[kind,a,g,tag,off,jmKey?1:0].join('|');if(cache.has(k))return cache.get(k);
+ const r=await Promise.allSettled([auAPI(kind,a,g,off),jmAPI(kind,a,tag,off)]);
+ if(r[0].status==='rejected'&&r[1].status==='rejected')throw Error('net');
+ const A=r[0].value||[],B=r[1].value||[],m=[];for(let i=0;i<Math.max(A.length,B.length);i++){if(A[i])m.push(A[i]);if(B[i])m.push(B[i])}
+ cache.set(k,m);return m}
 
 /* Listas */
 const SK='<div class="sk"></div>'.repeat(6);
 const isFav=t=>!!t&&favs.some(f=>f.id===t.id);
-function render(el,t){el._tracks=t;el.innerHTML=t.map((x,i)=>`<div class="item"><button class="main" data-i="${i}"><div class="art" style="background-image:url('${esc(x.art)}')"></div><div class="meta"><b>${esc(x.title)}</b><span>${esc(x.artist)}</span></div></button><button class="heart${isFav(x)?' on':''}" data-h="${i}" aria-label="Me gusta">${I.heart}</button></div>`).join('');mark()}
-async function fill(el,msg,fn){const n=el._n=(el._n||0)+1;el._tracks=[];el.innerHTML=SK;msg.textContent='';
- try{const t=await fn();if(n!==el._n)return;render(el,t);if(!t.length)msg.textContent='Sin resultados. Prueba con otras palabras.'}
+function render(el,t){el._tracks=t;el.innerHTML=t.map((x,i)=>`<div class="item"><button class="main" data-i="${i}"><div class="art" style="background-image:url('${esc(x.art)}')"></div><div class="meta"><b>${esc(x.title)}</b><span>${esc(x.artist)}</span></div></button><button class="heart${isFav(x)?' on':''}" data-h="${i}" aria-label="Me gusta">${I.heart}</button></div>`).join('')+(el._fn&&(el._last??t.length)>=20?'<button class="btn ghost more">Cargar más</button>':'');mark()}
+async function fill(el,msg,fn){const n=el._n=(el._n||0)+1;el._tracks=[];el._fn=fn;el._last=undefined;el.innerHTML=SK;msg.textContent='';
+ try{const t=await fn(0);if(n!==el._n)return;el._last=t.length;render(el,t);if(!t.length)msg.textContent='Sin resultados. Prueba con otras palabras.'}
  catch{if(n!==el._n)return;el.innerHTML='';msg.textContent='No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.'}}
 function mark(){$$('.list').forEach(L=>(L._tracks||[]).forEach((t,i)=>{const r=L.children[i];if(r)r.classList.toggle('now',!!cur&&cur.id===t.id)}))}
 function syncHearts(){$$('.list').forEach(L=>L.querySelectorAll('[data-h]').forEach(b=>b.classList.toggle('on',isFav(L._tracks[+b.dataset.h]))));$('#sheart').classList.toggle('on',isFav(cur))}
@@ -191,7 +205,7 @@ let cat=null;
 function openCat(id){cat=CATS.find(c=>c.id===id);$('#cgrid').hidden=true;$('#cdet').hidden=false;$('#ctitle').textContent=cat.n;
  $('#csubs').innerHTML=cat.subs.length>1?cat.subs.map((s,i)=>`<button class="chip" data-s="${i}">${esc(s[0])}</button>`).join(''):'';subCat(0);$('main').scrollTop=0}
 function subCat(i){const s=cat.subs[i];$$('#csubs .chip').forEach((c,j)=>c.classList.toggle('on',j===i));
- fill($('#l-cat'),$('#cmsg'),()=>s[1]?get('s',s[1]):get('t','',s[2]))}
+ fill($('#l-cat'),$('#cmsg'),p=>s[1]?get('s',s[1],'','',p*40):get('t','',s[2],JM[s[2]]||'',p*40))}
 function closeCat(){$('#cgrid').hidden=false;$('#cdet').hidden=true}
 $('#grid').onclick=e=>{const b=e.target.closest('[data-c]');if(b)openCat(b.dataset.c)};
 $('#csubs').onclick=e=>{const b=e.target.closest('[data-s]');if(b)subCat(+b.dataset.s)};
@@ -205,12 +219,12 @@ $('#close').onclick=()=>{$('#sheet').classList.remove('on');$('#sheet').setAttri
 
 /* Búsqueda en vivo */
 let tmr;
-function doSearch(q){$('#ttl').textContent=q?'Resultados':'Tendencias';fill($('#l-home'),$('#msg'),()=>q?get('s',q):get('t','',''))}
+function doSearch(q){$('#ttl').textContent=q?'Resultados':'Tendencias';fill($('#l-home'),$('#msg'),p=>q?get('s',q,'','',p*40):get('t','','','',p*40))}
 $('#q').addEventListener('input',e=>{clearTimeout(tmr);tmr=setTimeout(()=>doSearch(e.target.value.trim()),350)});
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter'){clearTimeout(tmr);e.target.blur();doSearch(e.target.value.trim())}});
 
 /* Reproducción */
-const url=async t=>`${await getHost()}/v1/tracks/${t.id}/stream?app_name=onda`;
+const url=async t=>t.src==='jm'?t.url:`${await getHost()}/v1/tracks/${t.id}/stream?app_name=onda`;
 async function play(L,i){queue=L;idx=i;retry=0;await load()}
 async function load(){cur=queue[idx];if(!cur)return;ui();
  try{au.src=await url(cur);await au.play()}catch{}
@@ -236,6 +250,13 @@ sk.onchange=()=>{drag=false;au.currentTime=+sk.value};
 setInterval(()=>{if(!cur)return;const t=au.currentTime,d=isFinite(au.duration)?au.duration:(cur.dur||0);if(!d)return;
  sk.max=d;$('#t1').textContent=fmt(d);$('#mbar').style.width=(t/d*100)+'%';if(!drag){sk.value=t;$('#t0').textContent=fmt(t)}},400);
 
+document.addEventListener('click',async e=>{const b=e.target.closest('.more');if(!b)return;const L=b.closest('.list');b.textContent='Cargando…';
+ try{const t=await L._fn(L._off=(L._off||0)+1);L._last=t.length;const ids=new Set(L._tracks.map(x=>x.id));render(L,L._tracks.concat(t.filter(x=>!ids.has(x.id))))}
+ catch{L._off--;b.textContent='Reintentar'}});
+$('#jmcard').hidden=!!jmKey;
+$('#jmsave').onclick=async()=>{const v=$('#jmkey').value.trim();if(!v)return;const old=jmKey;jmKey=v;$('#jmerr').textContent='Comprobando…';
+ try{await jmAPI('t','','',0);LS.set('onda_jmkey',v);cache.clear();$('#jmcard').hidden=true;doSearch($('#q').value.trim())}
+ catch{jmKey=old;$('#jmerr').textContent='Esa clave no funciona. Revisa que sea el Client ID de tu aplicación.'}};
 setPlay(false);doSearch('');
 if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 </script></body></html>
