@@ -85,14 +85,19 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 .card b{font-size:16px}.card p{margin:6px 0 12px;color:var(--mut);font-size:14px;line-height:1.5}
 .card input{width:100%;height:46px;border-radius:14px;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.25);color:var(--tx);padding:0 14px;font:inherit;font-size:15px}
 .more{margin:12px auto 0;display:flex;justify-content:center}
+.tag{font-size:11px;font-weight:600;padding:3px 8px;border-radius:10px;background:rgba(255,255,255,.12);color:var(--mut);flex:none}
+#ytwrap{aspect-ratio:16/9;border-radius:20px;overflow:hidden;background:#000;display:none;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+#ytwrap iframe{width:100%;height:100%;border:0}
 </style></head><body>
 <div class="blobs"><i></i><i></i><i></i></div>
 <main>
 <section id="home" class="view on">
  <h1>Onda</h1>
  <div class="glass search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="q" type="search" placeholder="Canciones, artistas o álbumes" enterkeyhint="search" autocomplete="off"></div>
+ <div class="chips" id="srcchips"><button class="chip on" data-src="free">Sin anuncios</button><button class="chip" data-src="all">Todo</button><button class="chip" data-src="yt">YouTube</button></div>
  <button class="hero" id="hero"><b>Música cristiana evangélica</b><span>Alabanza, adoración, gospel y más</span></button>
  <div id="jmcard" class="glass card" hidden><b>Añade cientos de miles de canciones más</b><p>Activa Jamendo, gratis y sin anuncios. Crea una cuenta en devportal.jamendo.com, registra una aplicación y pega aquí su Client ID.</p><input id="jmkey" placeholder="Client ID de Jamendo" autocomplete="off"><button class="btn" id="jmsave" style="margin-top:10px">Activar</button><div id="jmerr" class="note"></div></div>
+ <div id="ytcard" class="glass card" hidden><b>Activa la búsqueda en YouTube</b><p>Las canciones de YouTube se reproducen con su reproductor oficial y pueden mostrar anuncios; las de las otras fuentes no. Necesitas una clave gratuita: entra a console.cloud.google.com, crea un proyecto, activa «YouTube Data API v3», crea una clave de API y pégala aquí.</p><input id="ytkey" type="password" placeholder="Clave de API de YouTube" autocomplete="off"><button class="btn" id="ytsave" style="margin-top:10px">Activar</button><div id="yterr" class="note"></div></div>
  <h2 id="ttl">Tendencias</h2>
  <div id="msg" class="note"></div>
  <div id="l-home" class="list"></div>
@@ -129,10 +134,12 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 <div class="sheet" id="sheet" aria-hidden="true">
  <div class="top"><button id="close" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><span style="width:24px"></span></div>
  <div id="bigart"></div>
+ <div id="ytwrap"><div id="ytp"></div></div>
  <div class="titles"><div class="meta"><b id="st"></b><span id="sa"></span></div><button class="heart" id="sheart" aria-label="Me gusta"></button></div>
  <input type="range" id="seek" min="0" max="100" value="0" step="0.1" aria-label="Progreso">
  <div class="times"><span id="t0">0:00</span><span id="t1">0:00</span></div>
  <div class="ctl"><button id="shuf" aria-label="Aleatorio"><svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg></button><button id="prev" aria-label="Anterior"></button><button class="play" id="bplay" aria-label="Reproducir o pausar"></button><button id="next" aria-label="Siguiente"></button><span style="width:30px"></span></div>
+ <p id="ytnote" class="note" hidden>Las canciones de YouTube pueden mostrar anuncios y solo suenan con esta pantalla abierta.</p>
 </div>
 
 <script>
@@ -169,7 +176,8 @@ $('#grid').innerHTML=CATS.map(c=>`<button class="cat${c.big?' big':''}" data-c="
 const mapT=t=>({id:t.id,src:'au',title:t.title,artist:t.user?.name||'',art:t.artwork?.['480x480']||t.artwork?.['150x150']||'',dur:t.duration});
 async function getHost(){if(host)return host;if(!hosts.length){try{hosts=(await(await fetch('https://api.audius.co')).json()).data||[]}catch{}}if(!hosts.length)hosts=['https://discoveryprovider.audius.co'];host=hosts[Math.random()*hosts.length|0];return host}
 async function api(p){for(let k=0;k<3;k++){try{const h=await getHost();const r=await fetch(h+p+(p.includes('?')?'&':'?')+'app_name=onda');if(!r.ok)throw 0;return((await r.json()).data||[]).filter(t=>t.is_streamable!==false).map(mapT)}catch{host=null}}throw Error('net')}
-const cache=new Map();let jmKey=LS.get('onda_jmkey','');
+const cache=new Map();let jmKey=LS.get('onda_jmkey','');let ytKey=LS.get('onda_ytkey',''),source='free',yt=null,ytOk=false;const ytTok={};
+const dec=s=>{const t=document.createElement('textarea');t.innerHTML=s;return t.value};
 const JM={Pop:'pop',Latin:'latin','Hip-Hop/Rap':'hiphop',Electronic:'electronic',Rock:'rock','R&B/Soul':'rnb','Lo-Fi':'lofi',Acoustic:'acoustic',Folk:'folk',Jazz:'jazz',Classical:'classical',Ambient:'ambient',Devotional:'gospel'};
 const enc=encodeURIComponent;
 const auAPI=(kind,a,g,off)=>api(kind==='s'?`/v1/tracks/search?query=${enc(a)}&limit=40&offset=${off}`:`/v1/tracks/trending?time=week&limit=40&offset=${off}${g?'&genre='+enc(g):''}`);
@@ -177,19 +185,24 @@ async function jmAPI(kind,a,tag,off){if(!jmKey)return[];
  const u=`https://api.jamendo.com/v3.0/tracks/?client_id=${enc(jmKey)}&format=json&limit=40&offset=${off}&audioformat=mp32`+(kind==='s'?`&search=${enc(a)}&order=relevance`:`&order=popularity_week${tag?'&tags='+enc(tag):''}`);
  const j=await(await fetch(u)).json();if(!j.headers||j.headers.status!=='success')throw Error('jm');
  return(j.results||[]).filter(t=>t.audio).map(t=>({id:'jm'+t.id,src:'jm',url:t.audio,title:t.name,artist:t.artist_name,art:t.image||t.album_image||'',dur:t.duration}))}
-async function get(kind,a,g,tag,off){const k=[kind,a,g,tag,off,jmKey?1:0].join('|');if(cache.has(k))return cache.get(k);
- const r=await Promise.allSettled([auAPI(kind,a,g,off),jmAPI(kind,a,tag,off)]);
- if(r[0].status==='rejected'&&r[1].status==='rejected')throw Error('net');
- const A=r[0].value||[],B=r[1].value||[],m=[];for(let i=0;i<Math.max(A.length,B.length);i++){if(A[i])m.push(A[i]);if(B[i])m.push(B[i])}
+async function ytAPI(q,pg){if(!ytKey)throw Error('nokey');const pt=pg?ytTok[q+'|'+pg]:'';if(pg&&!pt)return[];
+ const j=await(await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoCategoryId=10&maxResults=25&q=${enc(q)}${pt?'&pageToken='+pt:''}&key=${enc(ytKey)}`)).json();
+ if(j.error)throw Error(j.error.message||'yt');ytTok[q+'|'+(pg+1)]=j.nextPageToken||'';
+ return j.items.map(v=>({id:'yt'+v.id.videoId,vid:v.id.videoId,src:'yt',title:dec(v.snippet.title),artist:dec(v.snippet.channelTitle),art:v.snippet.thumbnails.medium.url}))}
+async function get(kind,a,g,tag,off,yq){const k=[kind,a,g,tag,off,jmKey?1:0,source,yq||''].join('|');if(cache.has(k))return cache.get(k);
+ const useFree=source!=='yt',useYt=source!=='free'&&!!yq;if(source==='yt'&&!ytKey)throw Error('nokey');
+ const r=await Promise.allSettled([useFree?auAPI(kind,a,g,off):[],useFree?jmAPI(kind,a,tag,off):[],useYt?ytAPI(yq,off/40):[]]);
+ if(!r.some(x=>x.status==='fulfilled'))throw Error('net');
+ const L=r.map(x=>x.value||[]),m=[];for(let i=0;i<Math.max(...L.map(x=>x.length));i++)L.forEach(x=>{if(x[i])m.push(x[i])});
  cache.set(k,m);return m}
 
 /* Listas */
 const SK='<div class="sk"></div>'.repeat(6);
 const isFav=t=>!!t&&favs.some(f=>f.id===t.id);
-function render(el,t){el._tracks=t;el.innerHTML=t.map((x,i)=>`<div class="item"><button class="main" data-i="${i}"><div class="art" style="background-image:url('${esc(x.art)}')"></div><div class="meta"><b>${esc(x.title)}</b><span>${esc(x.artist)}</span></div></button><button class="heart${isFav(x)?' on':''}" data-h="${i}" aria-label="Me gusta">${I.heart}</button></div>`).join('')+(el._fn&&(el._last??t.length)>=20?'<button class="btn ghost more">Cargar más</button>':'');mark()}
+function render(el,t){el._tracks=t;el.innerHTML=t.map((x,i)=>`<div class="item"><button class="main" data-i="${i}"><div class="art" style="background-image:url('${esc(x.art)}')"></div><div class="meta"><b>${esc(x.title)}</b><span>${esc(x.artist)}</span></div>${x.src==='yt'?'<span class="tag">YouTube</span>':''}</button><button class="heart${isFav(x)?' on':''}" data-h="${i}" aria-label="Me gusta">${I.heart}</button></div>`).join('')+(el._fn&&(el._last??t.length)>=20?'<button class="btn ghost more">Cargar más</button>':'');mark()}
 async function fill(el,msg,fn){const n=el._n=(el._n||0)+1;el._tracks=[];el._fn=fn;el._last=undefined;el.innerHTML=SK;msg.textContent='';
  try{const t=await fn(0);if(n!==el._n)return;el._last=t.length;render(el,t);if(!t.length)msg.textContent='Sin resultados. Prueba con otras palabras.'}
- catch{if(n!==el._n)return;el.innerHTML='';msg.textContent='No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.'}}
+ catch(e){if(n!==el._n)return;el.innerHTML='';msg.textContent=e.message==='nokey'?'Para buscar en YouTube, agrega tu clave de la API.':'No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.'}}
 function mark(){$$('.list').forEach(L=>(L._tracks||[]).forEach((t,i)=>{const r=L.children[i];if(r)r.classList.toggle('now',!!cur&&cur.id===t.id)}))}
 function syncHearts(){$$('.list').forEach(L=>L.querySelectorAll('[data-h]').forEach(b=>b.classList.toggle('on',isFav(L._tracks[+b.dataset.h]))));$('#sheart').classList.toggle('on',isFav(cur))}
 function renderFavs(){const L=$('#l-favs');if(!favs.length){L._tracks=[];L.innerHTML='<p class="note">Aún no tienes favoritas. Toca el corazón en cualquier canción para guardarla aquí.</p>'}else render(L,favs);$('#nf').textContent=favs.length}
@@ -205,7 +218,7 @@ let cat=null;
 function openCat(id){cat=CATS.find(c=>c.id===id);$('#cgrid').hidden=true;$('#cdet').hidden=false;$('#ctitle').textContent=cat.n;
  $('#csubs').innerHTML=cat.subs.length>1?cat.subs.map((s,i)=>`<button class="chip" data-s="${i}">${esc(s[0])}</button>`).join(''):'';subCat(0);$('main').scrollTop=0}
 function subCat(i){const s=cat.subs[i];$$('#csubs .chip').forEach((c,j)=>c.classList.toggle('on',j===i));
- fill($('#l-cat'),$('#cmsg'),p=>s[1]?get('s',s[1],'','',p*40):get('t','',s[2],JM[s[2]]||'',p*40))}
+ fill($('#l-cat'),$('#cmsg'),p=>s[1]?get('s',s[1],'','',p*40,s[1]):get('t','',s[2],JM[s[2]]||'',p*40,s[0]+' música'))}
 function closeCat(){$('#cgrid').hidden=false;$('#cdet').hidden=true}
 $('#grid').onclick=e=>{const b=e.target.closest('[data-c]');if(b)openCat(b.dataset.c)};
 $('#csubs').onclick=e=>{const b=e.target.closest('[data-s]');if(b)subCat(+b.dataset.s)};
@@ -214,12 +227,14 @@ $('#hero').onclick=()=>{tab('cats');openCat('cris')};
 $('#cplay').onclick=()=>{const t=$('#l-cat')._tracks;if(t&&t.length)play(t,0)};
 $('#fplay').onclick=()=>{if(favs.length)play(favs,0)};
 $('#clr').onclick=()=>{recents=[];LS.set('onda_recents',recents);renderLib()};
-$('#open').onclick=()=>{$('#sheet').classList.add('on');$('#sheet').setAttribute('aria-hidden','false')};
-$('#close').onclick=()=>{$('#sheet').classList.remove('on');$('#sheet').setAttribute('aria-hidden','true')};
+const openSheet=()=>{$('#sheet').classList.add('on');$('#sheet').setAttribute('aria-hidden','false')};
+$('#open').onclick=openSheet;
+$('#close').onclick=()=>{$('#sheet').classList.remove('on');$('#sheet').setAttribute('aria-hidden','true');if(cur&&cur.src==='yt'&&ytOk&&yt.pauseVideo)yt.pauseVideo()};
 
 /* Búsqueda en vivo */
 let tmr;
-function doSearch(q){$('#ttl').textContent=q?'Resultados':'Tendencias';fill($('#l-home'),$('#msg'),p=>q?get('s',q,'','',p*40):get('t','','','',p*40))}
+function doSearch(q){if(!q&&source==='yt'){const L=$('#l-home');L._n=(L._n||0)+1;L._tracks=[];L.innerHTML='';$('#ttl').textContent='YouTube';$('#msg').textContent='Escribe el nombre de una canción o artista para buscar en YouTube.';return}
+ $('#ttl').textContent=q?'Resultados':'Tendencias';fill($('#l-home'),$('#msg'),p=>q?get('s',q,'','',p*40,q):get('t','','','',p*40,''))}
 $('#q').addEventListener('input',e=>{clearTimeout(tmr);tmr=setTimeout(()=>doSearch(e.target.value.trim()),350)});
 $('#q').addEventListener('keydown',e=>{if(e.key==='Enter'){clearTimeout(tmr);e.target.blur();doSearch(e.target.value.trim())}});
 
@@ -227,33 +242,42 @@ $('#q').addEventListener('keydown',e=>{if(e.key==='Enter'){clearTimeout(tmr);e.t
 const url=async t=>t.src==='jm'?t.url:`${await getHost()}/v1/tracks/${t.id}/stream?app_name=onda`;
 async function play(L,i){queue=L;idx=i;retry=0;await load()}
 async function load(){cur=queue[idx];if(!cur)return;ui();
- try{au.src=await url(cur);await au.play()}catch{}
+ if(cur.src==='yt'){au.pause();au.removeAttribute('src');openSheet();ensureYT();if(ytOk)yt.loadVideoById(cur.vid)}else{if(ytOk)yt.pauseVideo();try{au.src=await url(cur);await au.play()}catch{}}
  recents=[cur,...recents.filter(r=>r.id!==cur.id)].slice(0,40);LS.set('onda_recents',recents);
- const n=queue[(idx+1)%queue.length];if(n&&n.id!==cur.id)try{pre.src=await url(n)}catch{}}
-au.onerror=async()=>{if(!cur)return;if(retry++<2){host=null;await load()}else{retry=0;step(1)}};
+ const n=queue[(idx+1)%queue.length];if(n&&n.id!==cur.id&&n.src!=='yt')try{pre.src=await url(n)}catch{}}
+au.onerror=async()=>{if(!cur||cur.src==='yt')return;if(retry++<2){host=null;await load()}else{retry=0;step(1)}};
 function step(d){if(!queue.length)return;idx=shuf&&d>0&&queue.length>1?(idx+1+Math.random()*(queue.length-1)|0)%queue.length:(idx+d+queue.length)%queue.length;retry=0;load()}
-function toggle(){if(!cur)return;au.paused?au.play().catch(()=>{}):au.pause()}
+function toggle(){if(!cur)return;if(cur.src==='yt'){if(!ytOk)return;if(yt.getPlayerState()===1)yt.pauseVideo();else{openSheet();yt.playVideo()}return}au.paused?au.play().catch(()=>{}):au.pause()}
 function setPlay(p){$('#bplay').innerHTML=p?I.pause:I.play;$('#mplay').innerHTML=p?I.pause:I.play;if('mediaSession'in navigator)navigator.mediaSession.playbackState=p?'playing':'paused'}
-au.onplay=()=>setPlay(true);au.onpause=()=>setPlay(false);au.onended=()=>step(1);
-$('#bplay').onclick=$('#mplay').onclick=toggle;$('#next').onclick=()=>step(1);$('#prev').onclick=()=>{if(au.currentTime>3)au.currentTime=0;else step(-1)};
+au.onplay=()=>{if(!cur||cur.src!=='yt')setPlay(true)};au.onpause=()=>{if(!cur||cur.src!=='yt')setPlay(false)};au.onended=()=>step(1);
+$('#bplay').onclick=$('#mplay').onclick=toggle;$('#next').onclick=()=>step(1);$('#prev').onclick=()=>{if(cur&&cur.src!=='yt'&&au.currentTime>3)au.currentTime=0;else step(-1)};
 $('#sheart').onclick=()=>toggleFav(cur);
 $('#shuf').onclick=()=>{shuf=!shuf;$('#shuf').classList.toggle('on',shuf)};
 function ui(){$('#mini').classList.add('on');const bg=cur.art?`url('${cur.art}')`:'';$('#mart').style.backgroundImage=bg;$('#bigart').style.backgroundImage=bg;
- $('#mt').textContent=$('#st').textContent=cur.title;$('#ma').textContent=$('#sa').textContent=cur.artist;syncHearts();mark();
+ $('#mt').textContent=$('#st').textContent=cur.title;$('#ma').textContent=$('#sa').textContent=cur.artist;$('#bigart').style.display=cur.src==='yt'?'none':'block';$('#ytwrap').style.display=cur.src==='yt'?'block':'none';$('#ytnote').hidden=cur.src!=='yt';syncHearts();mark();
  if('mediaSession'in navigator){navigator.mediaSession.metadata=new MediaMetadata({title:cur.title,artist:cur.artist,artwork:cur.art?[{src:cur.art}]:[]});
   navigator.mediaSession.setActionHandler('play',toggle);navigator.mediaSession.setActionHandler('pause',toggle);
   navigator.mediaSession.setActionHandler('nexttrack',()=>step(1));navigator.mediaSession.setActionHandler('previoustrack',()=>step(-1))}}
 const fmt=s=>{s=Math.max(0,s|0);return(s/60|0)+':'+String(s%60).padStart(2,'0')};
 let drag=false;const sk=$('#seek');
 sk.oninput=()=>{drag=true;$('#t0').textContent=fmt(sk.value)};
-sk.onchange=()=>{drag=false;au.currentTime=+sk.value};
-setInterval(()=>{if(!cur)return;const t=au.currentTime,d=isFinite(au.duration)?au.duration:(cur.dur||0);if(!d)return;
+sk.onchange=()=>{drag=false;if(cur.src==='yt'){if(ytOk)yt.seekTo(+sk.value,true)}else au.currentTime=+sk.value};
+setInterval(()=>{if(!cur)return;let t,d;if(cur.src==='yt'){if(!ytOk||!yt.getCurrentTime)return;t=yt.getCurrentTime();d=yt.getDuration()}else{t=au.currentTime;d=isFinite(au.duration)?au.duration:(cur.dur||0)}if(!d)return;
  sk.max=d;$('#t1').textContent=fmt(d);$('#mbar').style.width=(t/d*100)+'%';if(!drag){sk.value=t;$('#t0').textContent=fmt(t)}},400);
 
 document.addEventListener('click',async e=>{const b=e.target.closest('.more');if(!b)return;const L=b.closest('.list');b.textContent='Cargando…';
  try{const t=await L._fn(L._off=(L._off||0)+1);L._last=t.length;const ids=new Set(L._tracks.map(x=>x.id));render(L,L._tracks.concat(t.filter(x=>!ids.has(x.id))))}
  catch{L._off--;b.textContent='Reintentar'}});
 $('#jmcard').hidden=!!jmKey;
+const showCards=()=>{$('#ytcard').hidden=!!ytKey||source==='free'};
+$('#srcchips').onclick=e=>{const b=e.target.closest('[data-src]');if(!b)return;source=b.dataset.src;$$('#srcchips .chip').forEach(c=>c.classList.toggle('on',c===b));showCards();doSearch($('#q').value.trim())};
+$('#ytsave').onclick=async()=>{const v=$('#ytkey').value.trim();if(!v)return;const old=ytKey;ytKey=v;$('#yterr').textContent='Comprobando…';
+ try{await ytAPI('música',0);LS.set('onda_ytkey',v);cache.clear();showCards();$('#yterr').textContent='';doSearch($('#q').value.trim())}
+ catch{ytKey=old;$('#yterr').textContent='Esa clave no funciona. Revisa que la API «YouTube Data API v3» esté activada.'}};
+function ensureYT(){if(window.YT&&window.YT.Player||document.getElementById('ytapi'))return;const sc=document.createElement('script');sc.id='ytapi';sc.src='https://www.youtube.com/iframe_api';document.head.appendChild(sc)}
+window.onYouTubeIframeAPIReady=()=>{yt=new YT.Player('ytp',{width:'100%',height:'100%',playerVars:{playsinline:1,rel:0},events:{
+ onReady:()=>{ytOk=true;if(cur&&cur.src==='yt')yt.loadVideoById(cur.vid)},
+ onStateChange:e=>{if(cur&&cur.src==='yt'){if(e.data===0)step(1);setPlay(e.data===1)}}}})};
 $('#jmsave').onclick=async()=>{const v=$('#jmkey').value.trim();if(!v)return;const old=jmKey;jmKey=v;$('#jmerr').textContent='Comprobando…';
  try{await jmAPI('t','','',0);LS.set('onda_jmkey',v);cache.clear();$('#jmcard').hidden=true;doSearch($('#q').value.trim())}
  catch{jmKey=old;$('#jmerr').textContent='Esa clave no funciona. Revisa que sea el Client ID de tu aplicación.'}};
